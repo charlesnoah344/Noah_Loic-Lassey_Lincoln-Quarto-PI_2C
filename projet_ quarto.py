@@ -160,34 +160,42 @@ def find_best_pos(state):
             # Place the piece on the board
         best_score = -float('inf')
         best_pos = None
+        available_positions = get_available_positions(state)
+        available_pieces = get_available_pieces(state)
+        start_time = time.time()
+
             
-        for pos in range(16):
-            if board[pos] is None:
-                # Simulate placing the piece
-                new_board = board.copy()
-                new_board[pos] = current_piece
-                    
-                    # Immediate win check
-                if check_winner(new_board):
-                    return pos
-                    
-                # Evaluate the position
-                score = minimax(
-                        state,
-                        new_board, 
-                        [p for p in get_available_pieces(state)], 
-                        None, 
-                        depth=3, 
-                        is_maximizing=False, 
-                        alpha=-float('inf'), 
-                        beta=float('inf'),
-                        start_time=time.time()
-                    )
-                    
-                if score > best_score:
-                        best_score = score
-                        best_pos = pos
+        # Vérifier d'abord les positions gagnantes immédiates
+        for pos in available_positions:
+            new_board = board.copy()
+            new_board[pos] = current_piece
+            if check_winner(new_board):
+                return pos
+          # Si pas de victoire immédiate, utiliser minimax
+        for pos in available_positions:
+            # Si on approche du timeout, retourner la meilleure position trouvée jusqu'à présent
+            if time.time() - start_time > timeout * 0.7:
+                break
+                
+            new_board = board.copy()
+            new_board[pos] = current_piece
             
+            score = minimax(
+                state,
+                new_board, 
+                available_pieces,  # Utiliser la liste déjà calculée
+                None, 
+                depth=3,  # Réduire la profondeur pour être sûr de terminer à temps
+                is_maximizing=True,  # On veut maximiser notre score
+                alpha=-float('inf'), 
+                beta=float('inf'),
+                start_time=start_time  # Utiliser le même chronomètre
+            )
+            
+            if score > best_score:
+                best_score = score
+                best_pos = pos
+        
         return best_pos if best_pos is not None else chosen_randpos(state)
 
 def find_best_piece(state):
@@ -195,17 +203,23 @@ def find_best_piece(state):
     board=state["board"]
     best_score = -float('inf')
     best_piece = None
+    available_pieces = get_available_pieces(state)
+    start_time = time.time()  # Un seul chronomètre pour toute la fonction
+
             
-    for piece in get_available_pieces(state):
+    for piece in available_pieces:
+                # Si on approche du timeout, retourner la meilleure pièce trouvée jusqu'à présent
+                if time.time() - start_time > timeout * 0.7:
+                    break
                 score = minimax(state,
                     board.copy(),
                     [p for p in get_available_pieces(state) if p != piece],
                     piece,
                     depth=3,
-                    is_maximizing=False,
+                    is_maximizing=True,
                     alpha=-float('inf'),
                     beta=float('inf'),
-                    start_time=time.time()
+                    start_time=start_time
                 )
                 
                 if score > best_score:
