@@ -7,7 +7,7 @@ import copy
 port=667
 nom='Noah et Lassey'
 matricules=["23397","23158"]
-timeout=2.8
+timeout=4.0
 server_address=('localhost', 3000)
 max_recv_length = 10000
 piece_initiales=['BDEC','BDFC','BDEP','BDFP','BLEC','BLFC','BLEP','BLFP',
@@ -133,14 +133,14 @@ def evaluate_board(board):
                 for attr_idx in range(4):
                     attrs = [p[attr_idx] for p in row if p is not None]
                     if len(set(attrs)) == 1:
-                        score += len(attrs)
+                        score += 10*len(attrs)
             # Columns
             column = [grid[j][i] for j in range(4)]
             if None in column:
                 for attr_idx in range(4):
                     attrs = [p[attr_idx] for p in column if p is not None]
                     if len(set(attrs)) == 1:
-                        score += len(attrs)
+                        score += 10*len(attrs)
         
         # Diagonals
         diag1 = [grid[i][i] for i in range(4)]
@@ -150,7 +150,7 @@ def evaluate_board(board):
                 for attr_idx in range(4):
                     attrs = [p[attr_idx] for p in diag if p is not None]
                     if len(set(attrs)) == 1:
-                        score += len(attrs)
+                        score += 10*len(attrs)
         
         return score
 def find_best_pos(state):
