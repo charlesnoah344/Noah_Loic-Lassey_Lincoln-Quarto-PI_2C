@@ -84,16 +84,15 @@ def chosen_randpiece(state):
     piece=random.choice(pieces)
     return piece
 
-def has_common_attribute(list,state):
-    """Cette fonction value si les pièces ont un attribut commun"""
-    pieces=get_available_pieces(state)
+def has_common_attribute(pieces):
+    """Cette fonction évalue si les pièces d'une liste ont un attribut commun"""
     if not pieces or None in pieces:
         return False
     for i in range(4):  # Check each attribute
         if len(set(p[i] for p in pieces)) == 1:
             return True
     return False
-def check_winner(board, state):
+def check_winner(board):
         """évalue l'existence d'une ligne gagnante et retourne un booléen"""
         # Convert linear board to 4x4 grid
         grid = [board[i*4:(i+1)*4] for i in range(4)]
@@ -102,19 +101,19 @@ def check_winner(board, state):
         for i in range(4):
             # Rows
             row = grid[i]
-            if None not in row and has_common_attribute(row,state):
+            if None not in row and has_common_attribute(row):
                 return True
             # Columns
             column = [grid[j][i] for j in range(4)]
-            if None not in column and has_common_attribute(column, state):
+            if None not in column and has_common_attribute(column):
                 return True
         
         # Diagonals
         diag1 = [grid[i][i] for i in range(4)]
         diag2 = [grid[i][3-i] for i in range(4)]
-        if None not in diag1 and has_common_attribute(diag1,state):
+        if None not in diag1 and has_common_attribute(diag1):
             return True
-        if None not in diag2 and has_common_attribute(diag2,state):
+        if None not in diag2 and has_common_attribute(diag2):
             return True
         
         
@@ -169,7 +168,7 @@ def find_best_pos(state):
                 new_board[pos] = current_piece
                     
                     # Immediate win check
-                if check_winner(new_board,state):
+                if check_winner(new_board):
                     return pos
                     
                 # Evaluate the position
@@ -213,7 +212,7 @@ def find_best_piece(state):
                     best_score = score
                     best_piece = piece
             
-    return best_piece if best_piece is not None else chosen_randpiece
+    return best_piece if best_piece is not None else chosen_randpiece(state)
 
 
 def minimax( state, board, remaining_pieces, current_piece, 
@@ -226,7 +225,7 @@ def minimax( state, board, remaining_pieces, current_piece,
             return 0
         
         # Terminal conditions
-        if check_winner(board,state):
+        if check_winner(board):
             return 100 if not is_maximizing else -100
         if depth == 0 or not remaining_pieces:
             return evaluate_board(board)
