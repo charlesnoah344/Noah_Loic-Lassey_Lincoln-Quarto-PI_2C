@@ -133,14 +133,14 @@ def evaluate_board(board):
                 for attr_idx in range(4):
                     attrs = [p[attr_idx] for p in row if p is not None]
                     if len(set(attrs)) == 1:
-                        score += 10*len(attrs)
+                        score += 10**len(attrs)
             # Columns
             column = [grid[j][i] for j in range(4)]
             if None in column:
                 for attr_idx in range(4):
                     attrs = [p[attr_idx] for p in column if p is not None]
                     if len(set(attrs)) == 1:
-                        score += 10*len(attrs)
+                        score += 10**len(attrs)
         
         # Diagonals
         diag1 = [grid[i][i] for i in range(4)]
@@ -150,9 +150,80 @@ def evaluate_board(board):
                 for attr_idx in range(4):
                     attrs = [p[attr_idx] for p in diag if p is not None]
                     if len(set(attrs)) == 1:
-                        score += 10*len(attrs)
+                        score += 10**len(attrs)
+            # Bonus pour positions stratégiques
+        position_weights = [
+            2, 1, 1, 2,
+            1, 3, 3, 1,
+            1, 3, 3, 1,
+            2, 1, 1, 2
+        ]
         
+        for i in range(16):
+            if board[i] is not None:
+                # Donnez plus de valeur aux pièces sur des positions stratégiques
+                for attr_idx in range(4):
+                    score += position_weights[i]*5 
+            
         return score
+
+def evaluate_blocking_potential(board):
+    """Évalue les possibilités de blocage des alignements potentiels de l'adversaire"""
+    blocking_score = 0
+    grid = [board[i*4:(i+1)*4] for i in range(4)]
+    
+    # Vérifier les lignes avec un seul espace libre
+    for i in range(4):
+        row = grid[i]
+        if row.count(None) == 1:
+            filled_positions = [p for p in row if p is not None]
+            if len(filled_positions) >= 2:  # Au moins 2 pièces placées
+                for attr_idx in range(4):
+                    attrs = [p[attr_idx] for p in filled_positions]
+                    if len(set(attrs)) == 1:  # Tous les attributs sont identiques
+                        blocking_score -= 50  # Pénalité pour une ligne presque complète
+        
+        # Vérifier les colonnes avec un seul espace libre
+        column = [grid[j][i] for j in range(4)]
+        if column.count(None) == 1:
+            filled_positions = [p for p in column if p is not None]
+            if len(filled_positions) >= 2:
+                for attr_idx in range(4):
+                    attrs = [p[attr_idx] for p in filled_positions]
+                    if len(set(attrs)) == 1:
+                        blocking_score -= 50
+    
+    # Vérifier les diagonales avec un seul espace libre
+    diag1 = [grid[i][i] for i in range(4)]
+    if diag1.count(None) == 1:
+        filled_positions = [p for p in diag1 if p is not None]
+        if len(filled_positions) >= 2:
+            for attr_idx in range(4):
+                attrs = [p[attr_idx] for p in filled_positions]
+                if len(set(attrs)) == 1:
+                    blocking_score -= 50
+    
+    diag2 = [grid[i][3-i] for i in range(4)]
+    if diag2.count(None) == 1:
+        filled_positions = [p for p in diag2 if p is not None]
+        if len(filled_positions) >= 2:
+            for attr_idx in range(4):
+                attrs = [p[attr_idx] for p in filled_positions]
+                if len(set(attrs)) == 1:
+                    blocking_score -= 50
+    
+    return blocking_score
+
+def evaluate_fonction(board):
+    """Fonction d'évaluation qui combine les alignements et les potentiels de blocage"""
+    alignment_score = evaluate_board(board)
+    blocking_score = evaluate_blocking_potential(board)
+    
+    # Vous pouvez ajuster les poids selon vos tests
+    total_score = alignment_score * 1.0 + blocking_score * 0.8
+    
+    return total_score
+
 def find_best_pos(state):
         """Trouve la position optimale avec alpha-beta pruning."""
         current_piece=state['piece']
@@ -242,7 +313,7 @@ def minimax( state, board, remaining_pieces, current_piece,
         if check_winner(board):
             return 100 if not is_maximizing else -100
         if depth == 0 or not remaining_pieces:
-            return evaluate_board(board)
+            return evaluate_fonction(board)
         
         if current_piece is not None:
             # Place the piece
