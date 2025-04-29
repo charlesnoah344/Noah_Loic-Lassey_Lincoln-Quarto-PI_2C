@@ -7,7 +7,7 @@ import copy
 port=667
 nom='Noah et Lassey'
 matricules=["23397","23158"]
-timeout=4.0
+timeout=4.9
 server_address=('localhost', 3000)
 max_recv_length = 10000
 piece_initiales=['BDEC','BDFC','BDEP','BDFP','BLEC','BLFC','BLEP','BLFP',
@@ -81,6 +81,8 @@ def chosen_randpos(state):
 def chosen_randpiece(state):
     '''cette fonction détermine la pièce à donner à l' adversaire'''
     pieces=get_available_pieces(state)
+    if not pieces:  # Vérifie si la liste est vide
+        return None  # Ou une autre valeur qui indique qu'il n'y a plus de pièces
     piece=random.choice(pieces)
     return piece
 
@@ -133,14 +135,14 @@ def evaluate_board(board):
                 for attr_idx in range(4):
                     attrs = [p[attr_idx] for p in row if p is not None]
                     if len(set(attrs)) == 1:
-                        score += 10**len(attrs)
+                        score += 10*len(attrs)
             # Columns
             column = [grid[j][i] for j in range(4)]
             if None in column:
                 for attr_idx in range(4):
                     attrs = [p[attr_idx] for p in column if p is not None]
                     if len(set(attrs)) == 1:
-                        score += 10**len(attrs)
+                        score += 10*len(attrs)
         
         # Diagonals
         diag1 = [grid[i][i] for i in range(4)]
@@ -150,7 +152,7 @@ def evaluate_board(board):
                 for attr_idx in range(4):
                     attrs = [p[attr_idx] for p in diag if p is not None]
                     if len(set(attrs)) == 1:
-                        score += 10**len(attrs)
+                        score += 10*len(attrs)
             # Bonus pour positions stratégiques
         position_weights = [
             2, 1, 1, 2,
@@ -163,7 +165,7 @@ def evaluate_board(board):
             if board[i] is not None:
                 # Donnez plus de valeur aux pièces sur des positions stratégiques
                 for attr_idx in range(4):
-                    score += position_weights[i]*5 
+                    score += position_weights[i]
             
         return score
 
@@ -220,7 +222,7 @@ def evaluate_fonction(board):
     blocking_score = evaluate_blocking_potential(board)
     
     # Vous pouvez ajuster les poids selon vos tests
-    total_score = alignment_score * 1.0 + blocking_score * 0.8
+    total_score = alignment_score * 2.0 + blocking_score * 1.0
     
     return total_score
 
@@ -257,7 +259,7 @@ def find_best_pos(state):
                 available_pieces,  # Utiliser la liste déjà calculée
                 None, 
                 depth=3,  # Réduire la profondeur pour être sûr de terminer à temps
-                is_maximizing=True,  # On veut maximiser notre score
+                is_maximizing=False,  # On veut maximiser notre score
                 alpha=-float('inf'), 
                 beta=float('inf'),
                 start_time=start_time  # Utiliser le même chronomètre
@@ -276,6 +278,10 @@ def find_best_piece(state):
     best_piece = None
     available_pieces = get_available_pieces(state)
     start_time = time.time()  # Un seul chronomètre pour toute la fonction
+
+     #Vérifier si la liste des pièces disponibles est vide
+    if not available_pieces:
+        return None
 
             
     for piece in available_pieces:
