@@ -8,7 +8,7 @@ from functools import lru_cache
 PORT = 677
 NOM = 'Lamine_Yamal_ssj3'
 MATRICULES = ["23397", "23158"]
-TIMEOUT = 4.9
+TIMEOUT = 3.0
 SERVER_ADDRESS = ('172.17.10.133', 3000)
 MAX_RECV_LENGTH = 10000
 
@@ -41,11 +41,21 @@ def get_available_positions(board):
     return positions
 
 def get_available_pieces(state):
-    """Retourne les pièces restantes non utilisées"""
-    used = {p for p in state["board"] if p is not None}
+    used = set(frozenset(p) for p in state["board"] if p is not None)
     if state["piece"]:
-        used.add(state["piece"])
-    return [p for p in PIECES_INITIALES if p not in used]
+        used.add(frozenset(state["piece"]))
+
+    all_pieces = set()
+    for size in ["B", "S"]:
+        for color in ["D", "L"]:
+            for weight in ["E", "F"]:
+                for shape in ["C", "P"]:
+                    all_pieces.add(frozenset(size + color + weight + shape))
+    list_res=[]
+    for elem in list(all_pieces-used):
+        mot=''.join(elem)
+        list_res.append(mot)
+    return  list_res
 
 def piece_danger_score(piece, board):
     """Évalue à quel point une pièce est dangereuse pour l'adversaire"""
