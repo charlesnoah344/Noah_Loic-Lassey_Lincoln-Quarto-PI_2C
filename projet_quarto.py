@@ -1,377 +1,343 @@
 import socket
 import json
-import time as time
+import time
 import random
-import copy
-#variables
-port=667
-nom='Noah et Lassey'
-matricules=["23397","23158"]
-timeout=4.9
-server_address=('localhost', 3000)
-max_recv_length = 10000
-piece_initiales=['BDEC','BDFC','BDEP','BDFP','BLEC','BLFC','BLEP','BLFP',
-                 'SDEC','SDFC','SDEP','SDFP','SLEC','SLFC','SLEP','SLFP']
+from functools import lru_cache
 
-'''inscription au serveur'''
+# Configuration
+PORT = 677
+NOM = 'Lamine_Yamal_ssj3'
+MATRICULES = ["23397", "23158"]
+TIMEOUT = 4.9
+SERVER_ADDRESS = ('172.17.10.133', 3000)
+MAX_RECV_LENGTH = 10000
 
-request={
-"request": "subscribe",
-"port": port,
-"name": nom,
-"matricules": matricules
-}
-with socket.socket() as s:
-    s.connect(server_address)
-    s.send(json.dumps(request).encode())#envoie de la requete d'inscription
-    response = s.recv(max_recv_length).decode()
-print(response)
-def main():
-    # print("------------------------")
+# Toutes les pièces possibles
+PIECES_INITIALES = [
+    'BDEC', 'BDFC', 'BDEP', 'BDFP', 'BLEC', 'BLFC', 'BLEP', 'BLFP',
+    'SDEC', 'SDFC', 'SDEP', 'SDFP', 'SLEC', 'SLFC', 'SLEP', 'SLFP'
+]
+
+# Inscription au serveur
+def s_inscrire():
+    request = {
+        "request": "subscribe",
+        "port": PORT,
+        "name": NOM,
+        "matricules": MATRICULES
+    }
     with socket.socket() as s:
-        s.bind(('', port))
+        s.connect(SERVER_ADDRESS)
+        s.send(json.dumps(request).encode())
+        response = s.recv(MAX_RECV_LENGTH).decode()
+    print("Réponse du serveur:", response)
+
+# Fonctions utilitaires améliorées
+def get_available_positions(board):
+    """Retourne les positions disponibles triées par importance (centre > coins > bords)"""
+    positions = [i for i, p in enumerate(board) if p is None]
+    position_values = [3 if i in [5, 6, 9, 10] else 2 if i in [0, 3, 12, 15] else 1 for i in range(16)]
+    positions.sort(key=lambda x: -position_values[x])
+    return positions
+
+def get_available_pieces(state):
+    """Retourne les pièces restantes non utilisées"""
+    used = {p for p in state["board"] if p is not None}
+    if state["piece"]:
+        used.add(state["piece"])
+    return [p for p in PIECES_INITIALES if p not in used]
+
+def piece_danger_score(piece, board):
+    """Évalue à quel point une pièce est dangereuse pour l'adversaire"""
+    score = 0
+    for pos in get_available_positions(board):
+        new_board = board.copy()
+        new_board[pos] = piece
+        if check_winner(new_board):
+            score += 100  # Pièce qui peut faire gagner immédiatement
+    return score
+
+# Fonctions d'évaluation améliorées
+def has_common_attribute(pieces):
+    """Vérifie si les pièces ont un attribut commun"""
+    if not pieces or None in pieces:
+        return False
+    for i in range(4):  # Vérifie chaque attribut
+        if len(set(p[i] for p in pieces)) == 1:
+            return True
+    return False
+
+def check_winner(board):
+    """Vérifie s'il y a un gagnant sur le plateau"""
+    # Convertir en grille 4x4
+    grid = [board[i*4:(i+1)*4] for i in range(4)]
+    
+    # Vérifier lignes et colonnes
+    for i in range(4):
+        row = grid[i]
+        if None not in row and has_common_attribute(row):
+            return True
+        column = [grid[j][i] for j in range(4)]
+        if None not in column and has_common_attribute(column):
+            return True
+    
+    # Vérifier diagonales
+    diag1 = [grid[i][i] for i in range(4)]
+    diag2 = [grid[i][3-i] for i in range(4)]
+    if (None not in diag1 and has_common_attribute(diag1)) or \
+       (None not in diag2 and has_common_attribute(diag2)):
+        return True
+    
+    return False
+
+def evaluate_board(board):
+    """Heuristique sophistiquée pour évaluer le plateau"""
+    score = 0
+    lines = []
+    
+    # Toutes les lignes possibles
+    for i in range(4):
+        lines.append([board[i*4 + j] for j in range(4)])  # Lignes
+        lines.append([board[j*4 + i] for j in range(4)])  # Colonnes
+    lines.append([board[i*4 + i] for i in range(4)])     # Diagonale 1
+    lines.append([board[i*4 + (3-i)] for i in range(4)]) # Diagonale 2
+    
+    for line in lines:
+        if None in line:
+            # Évaluer les lignes incomplètes
+            filled = [p for p in line if p is not None]
+            count = len(filled)
+            
+            for attr in range(4):
+                unique_attrs = set(p[attr] for p in filled)
+                if len(unique_attrs) == 1:
+                    score += 10 * count  # Bonus pour attributs communs
+                elif count == 3 and len(unique_attrs) == 2:
+                    score -= 20  # Pénalité pour situation dangereuse
+        else:
+            # Ligne complète
+            for attr in range(4):
+                if len(set(p[attr] for p in line)) == 1:
+                    return float('inf')  # Victoire
+    
+    # Bonus pour le centre et les coins
+    center_positions = [5, 6, 9, 10]
+    for pos in center_positions:
+        if board[pos] is not None:
+            score += 5
+    
+    return score
+
+# Algorithme Minimax optimisé
+@lru_cache(maxsize=None)
+def minimax_cached(board_tuple, pieces_tuple, current_piece, depth, is_maximizing, alpha, beta):
+    """Version avec mémoization de l'algorithme Minimax"""
+    board = list(board_tuple)
+    remaining_pieces = list(pieces_tuple) if pieces_tuple else []
+    
+    # Conditions terminales
+    if check_winner(board):
+        return float('inf') if not is_maximizing else -float('inf')
+    if depth == 0 or not remaining_pieces:
+        return evaluate_board(board)
+    
+    if current_piece is not None:
+        # Placer la pièce
+        if is_maximizing:
+            max_score = -float('inf')
+            for pos in get_available_positions(board):
+                new_board = board.copy()
+                new_board[pos] = current_piece
+                score = minimax_cached(
+                    tuple(new_board), tuple(remaining_pieces), None,
+                    depth-1, False, alpha, beta
+                )
+                max_score = max(max_score, score)
+                alpha = max(alpha, score)
+                if beta <= alpha:
+                    break
+            return max_score
+        else:
+            min_score = float('inf')
+            for pos in get_available_positions(board):
+                new_board = board.copy()
+                new_board[pos] = current_piece
+                score = minimax_cached(
+                    tuple(new_board), tuple(remaining_pieces), None,
+                    depth-1, True, alpha, beta
+                )
+                min_score = min(min_score, score)
+                beta = min(beta, score)
+                if beta <= alpha:
+                    break
+            return min_score
+    else:
+        # Choisir une pièce
+        pieces = sorted(remaining_pieces, key=lambda p: -piece_danger_score(p, board))
+        
+        if is_maximizing:
+            max_score = -float('inf')
+            for piece in pieces:
+                new_remaining = [p for p in remaining_pieces if p != piece]
+                score = minimax_cached(
+                    tuple(board), tuple(new_remaining), piece,
+                    depth-1, False, alpha, beta
+                )
+                max_score = max(max_score, score)
+                alpha = max(alpha, score)
+                if beta <= alpha:
+                    break
+            return max_score
+        else:
+            min_score = float('inf')
+            for piece in pieces:
+                new_remaining = [p for p in remaining_pieces if p != piece]
+                score = minimax_cached(
+                    tuple(board), tuple(new_remaining), piece,
+                    depth-1, True, alpha, beta
+                )
+                min_score = min(min_score, score)
+                beta = min(beta, score)
+                if beta <= alpha:
+                    break
+            return min_score
+
+def adaptive_depth(state, time_remaining):
+    """Détermine la profondeur de recherche en fonction du temps et de l'état du jeu"""
+    remaining_pieces = len(get_available_pieces(state))
+    
+    if time_remaining > 3.0:
+        if remaining_pieces > 12:
+            return 3
+        elif remaining_pieces > 8:
+            return 4
+        else:
+            return 5
+    elif time_remaining > 1.5:
+        return 3
+    else:
+        return 2
+
+# Fonctions principales améliorées
+def find_best_pos(state, start_time):
+    """Trouve la meilleure position pour placer la pièce actuelle"""
+    board = state["board"]
+    current_piece = state["piece"]
+    remaining_pieces = get_available_pieces(state)
+    time_remaining = TIMEOUT - (time.time() - start_time)
+    
+    # Vérifier les coups gagnants immédiats
+    for pos in get_available_positions(board):
+        new_board = board.copy()
+        new_board[pos] = current_piece
+        if check_winner(new_board):
+            return pos
+    
+    # Vérifier les coups perdants à bloquer
+    for piece in remaining_pieces:
+        for pos in get_available_positions(board):
+            new_board = board.copy()
+            new_board[pos] = piece
+            if check_winner(new_board):
+                # Éviter de donner cette position à l'adversaire
+                pass
+    
+    # Recherche Minimax avec profondeur adaptative
+    depth = adaptive_depth(state, time_remaining)
+    best_score = -float('inf')
+    best_pos = None
+    alpha = -float('inf')
+    beta = float('inf')
+    
+    for pos in get_available_positions(board):
+        if time.time() - start_time > TIMEOUT * 0.8:
+            break
+            
+        new_board = board.copy()
+        new_board[pos] = current_piece
+        score = minimax_cached(
+            tuple(new_board), tuple(remaining_pieces), None,
+            depth-1, False, alpha, beta
+        )
+        
+        if score > best_score:
+            best_score = score
+            best_pos = pos
+            alpha = max(alpha, score)
+    
+    return best_pos if best_pos is not None else get_available_positions(board)[0]
+
+def find_best_piece(state, start_time):
+    """Trouve la meilleure pièce à donner à l'adversaire"""
+    board = state["board"]
+    remaining_pieces = get_available_pieces(state)
+    time_remaining = TIMEOUT - (time.time() - start_time)
+    depth = adaptive_depth(state, time_remaining)
+    
+    best_score = -float('inf')
+    best_piece = None
+    alpha = -float('inf')
+    beta = float('inf')
+    
+    # Trier les pièces par dangerosité
+    pieces = sorted(remaining_pieces, key=lambda p: piece_danger_score(p, board))
+    
+    for piece in pieces:
+        if time.time() - start_time > TIMEOUT * 0.8:
+            break
+            
+        new_remaining = [p for p in remaining_pieces if p != piece]
+        score = minimax_cached(
+            tuple(board), tuple(new_remaining), piece,
+            depth-1, True, alpha, beta
+        )
+        
+        if score > best_score:
+            best_score = score
+            best_piece = piece
+            alpha = max(alpha, score)
+    
+    return best_piece if best_piece is not None else random.choice(remaining_pieces)
+
+# Boucle principale
+def main():
+    with socket.socket() as s:
+        s.bind(('', PORT))
         s.settimeout(1)
         s.listen()
         try:
             client, address = s.accept()
             with client:
-                request = client.recv(max_recv_length).decode()
-                # print("request =  ",request)
+                request = client.recv(MAX_RECV_LENGTH).decode()
                 req = json.loads(request)
                 message = req["request"]
                 
-                start_time=time.time() 
+                start_time = time.time()
                 
                 if message == "ping":
                     client.send(json.dumps({'response': 'pong'}).encode())
+
                 elif message == "play":
-                    state=req["state"]
-                    my_index=state['current']
-                    my_piece=state['piece']
+                    state = req["state"]
+                    chosen_move = {
+                        "pos": find_best_pos(state, start_time),
+                        "piece": find_best_piece(state, start_time)
+                    }
+                    client.send(json.dumps({
+                        'response': 'move',
+                        'move': chosen_move,
+                        'message': 'Stay humble ehh'
+                    }).encode())
                     error_list = req["errors"]
                     print("ERRORS : ", error_list)
-                    flag = False
-                    if not len(error_list) == 0:
-                        flag  = True
-                    chosen_move = {"pos": find_best_pos(state), "piece": find_best_piece(state) }
-                    client.send(json.dumps({'response': 'move', 'move': chosen_move, "message" : "appreciate" }).encode())
+                    print(chosen_move)
         except socket.timeout:
             pass
-        except OSError:
-            print("Server address not reachable.")
+        except Exception as e:
+            print(f"Erreur: {e}")
 
-'''fonctions'''
-def get_available_positions(state):
-    '''cette fonction retourne la liste des positions disponibles sur la grille de jeu'''
-    return [i for i, v in enumerate(state["board"]) if v is None]
-
-def get_available_pieces(state):
-    '''cette fonction retourne la liste des pièces restantes de la partie'''
-    used = set(p for p in state["board"] if p is not None)
-    if state["piece"]:
-        used.add(state["piece"])
-    return list(set(piece_initiales)-used)#retourne les pièces restantes
-
-def chosen_randpos(state):
-    '''cette fonction détermine la position de la pièce'''
-    position=get_available_positions(state)
-    pos=random.choice(position)
-    return pos
-
-def chosen_randpiece(state):
-    '''cette fonction détermine la pièce à donner à l' adversaire'''
-    pieces=get_available_pieces(state)
-    if not pieces:  # Vérifie si la liste est vide
-        return None  # Ou une autre valeur qui indique qu'il n'y a plus de pièces
-    piece=random.choice(pieces)
-    return piece
-
-def has_common_attribute(pieces):
-    """Cette fonction évalue si les pièces d'une liste ont un attribut commun"""
-    if not pieces or None in pieces:
-        return False
-    for i in range(4):  # Check each attribute
-        if len(set(p[i] for p in pieces)) == 1:
-            return True
-    return False
-def check_winner(board):
-        """évalue l'existence d'une ligne gagnante et retourne un booléen"""
-        # Convert linear board to 4x4 grid
-        grid = [board[i*4:(i+1)*4] for i in range(4)]
-        
-        # Check rows, columns, and diagonals
-        for i in range(4):
-            # Rows
-            row = grid[i]
-            if None not in row and has_common_attribute(row):
-                return True
-            # Columns
-            column = [grid[j][i] for j in range(4)]
-            if None not in column and has_common_attribute(column):
-                return True
-        
-        # Diagonals
-        diag1 = [grid[i][i] for i in range(4)]
-        diag2 = [grid[i][3-i] for i in range(4)]
-        if None not in diag1 and has_common_attribute(diag1):
-            return True
-        if None not in diag2 and has_common_attribute(diag2):
-            return True
-        
-        
-        return False
-
-def evaluate_board(board):
-        """Cette fonction est une héristique permetttant à l'IA de priviligier le palcement de pièces ayant un attribut commun"""
-
-        score = 0 #représente le nombre de pièce avec un attribut commmun alignés
-        grid = [board[i*4:(i+1)*4] for i in range(4)]
-        
-        for i in range(4):
-            # Rows
-            row = grid[i]
-            if None in row:
-                # Count how many pieces share attributes in incomplete rows
-                for attr_idx in range(4):
-                    attrs = [p[attr_idx] for p in row if p is not None]
-                    if len(set(attrs)) == 1:
-                        score += 100*len(attrs)
-            # Columns
-            column = [grid[j][i] for j in range(4)]
-            if None in column:
-                for attr_idx in range(4):
-                    attrs = [p[attr_idx] for p in column if p is not None]
-                    if len(set(attrs)) == 1:
-                        score += 100*len(attrs)
-        
-        # Diagonals
-        diag1 = [grid[i][i] for i in range(4)]
-        diag2 = [grid[i][3-i] for i in range(4)]
-        for diag in [diag1, diag2]:
-            if None in diag:
-                for attr_idx in range(4):
-                    attrs = [p[attr_idx] for p in diag if p is not None]
-                    if len(set(attrs)) == 1:
-                        score += 100*len(attrs)
-            # Bonus pour positions stratégiques
-        position_weights = [
-            2, 1, 1, 2,
-            1, 3, 3, 1,
-            1, 3, 3, 1,
-            2, 1, 1, 2
-        ]
-        
-        for i in range(16):
-            if board[i] is not None:
-                # Donnez plus de valeur aux pièces sur des positions stratégiques
-                for attr_idx in range(4):
-                    score += position_weights[i]
-            
-        return score
-
-def evaluate_blocking_potential(board):
-    """Évalue les possibilités de blocage des alignements potentiels de l'adversaire"""
-    blocking_score = 0
-    grid = [board[i*4:(i+1)*4] for i in range(4)]
-    
-    # Vérifier les lignes avec un seul espace libre
-    for i in range(4):
-        row = grid[i]
-        if row.count(None) == 1:
-            filled_positions = [p for p in row if p is not None]
-            if len(filled_positions) >= 2:  # Au moins 2 pièces placées
-                for attr_idx in range(4):
-                    attrs = [p[attr_idx] for p in filled_positions]
-                    if len(set(attrs)) == 1:  # Tous les attributs sont identiques
-                        blocking_score -= 50  # Pénalité pour une ligne presque complète
-        
-        # Vérifier les colonnes avec un seul espace libre
-        column = [grid[j][i] for j in range(4)]
-        if column.count(None) == 1:
-            filled_positions = [p for p in column if p is not None]
-            if len(filled_positions) >= 2:
-                for attr_idx in range(4):
-                    attrs = [p[attr_idx] for p in filled_positions]
-                    if len(set(attrs)) == 1:
-                        blocking_score -= 50
-    
-    # Vérifier les diagonales avec un seul espace libre
-    diag1 = [grid[i][i] for i in range(4)]
-    if diag1.count(None) == 1:
-        filled_positions = [p for p in diag1 if p is not None]
-        if len(filled_positions) >= 2:
-            for attr_idx in range(4):
-                attrs = [p[attr_idx] for p in filled_positions]
-                if len(set(attrs)) == 1:
-                    blocking_score -= 50
-    
-    diag2 = [grid[i][3-i] for i in range(4)]
-    if diag2.count(None) == 1:
-        filled_positions = [p for p in diag2 if p is not None]
-        if len(filled_positions) >= 2:
-            for attr_idx in range(4):
-                attrs = [p[attr_idx] for p in filled_positions]
-                if len(set(attrs)) == 1:
-                    blocking_score -= 50
-    
-    return blocking_score
-
-def evaluate_fonction(board):
-    """Fonction d'évaluation qui combine les alignements et les potentiels de blocage"""
-    alignment_score = evaluate_board(board)
-    blocking_score = evaluate_blocking_potential(board)
-    
-    # Vous pouvez ajuster les poids selon vos tests
-    total_score = alignment_score * 2.0 + blocking_score * 1.0
-    
-    return total_score
-
-def find_best_pos(state):
-        """Trouve la position optimale avec alpha-beta pruning."""
-        current_piece=state['piece']
-        board=state["board"]
-            # Place the piece on the board
-        best_score = -float('inf')
-        best_pos = None
-        available_positions = get_available_positions(state)
-        available_pieces = get_available_pieces(state)
-        start_time = time.time()
-
-            
-        # Vérifier d'abord les positions gagnantes immédiates
-        for pos in available_positions:
-            new_board = board.copy()
-            new_board[pos] = current_piece
-            if check_winner(new_board):
-                return pos
-          # Si pas de victoire immédiate, utiliser minimax
-        for pos in available_positions:
-            # Si on approche du timeout, retourner la meilleure position trouvée jusqu'à présent
-            if time.time() - start_time > timeout * 0.7:
-                break
-                
-            new_board = board.copy()
-            new_board[pos] = current_piece
-            
-            score = minimax(
-                state,
-                new_board, 
-                available_pieces,  # Utiliser la liste déjà calculée
-                None, 
-                depth=3,  # Réduire la profondeur pour être sûr de terminer à temps
-                is_maximizing=False,  # On veut maximiser notre score
-                alpha=-float('inf'), 
-                beta=float('inf'),
-                start_time=start_time  # Utiliser le même chronomètre
-            )
-            
-            if score > best_score:
-                best_score = score
-                best_pos = pos
-        
-        return best_pos if best_pos is not None else chosen_randpos(state)
-
-def find_best_piece(state):
-    """Trouve la pièce optimale pour l'adversaire avec alpha-beta pruning."""
-    board=state["board"]
-    best_score = -float('inf')
-    best_piece = None
-    available_pieces = get_available_pieces(state)
-    start_time = time.time()  # Un seul chronomètre pour toute la fonction
-
-     #Vérifier si la liste des pièces disponibles est vide
-    if not available_pieces:
-        return None
-
-            
-    for piece in available_pieces:
-                # Si on approche du timeout, retourner la meilleure pièce trouvée jusqu'à présent
-                if time.time() - start_time > timeout * 0.7:
-                    break
-                score = minimax(state,
-                    board.copy(),
-                    [p for p in get_available_pieces(state) if p != piece],
-                    piece,
-                    depth=3,
-                    is_maximizing=True,
-                    alpha=-float('inf'),
-                    beta=float('inf'),
-                    start_time=start_time
-                )
-                
-                if score > best_score:
-                    best_score = score
-                    best_piece = piece
-            
-    return best_piece if best_piece is not None else chosen_randpiece(state)
-
-
-def minimax( state, board, remaining_pieces, current_piece, 
-                depth, is_maximizing, alpha, beta, start_time):
-        """Minimax algorithm with alpha-beta pruning."""
-
-
-
-        if time.time() - start_time > timeout * 0.8:
-            return 0
-        
-        # Terminal conditions
-        if check_winner(board):
-            return 100 if not is_maximizing else -100
-        if depth == 0 or not remaining_pieces:
-            return evaluate_fonction(board)
-        
-        if current_piece is not None:
-            # Place the piece
-            if is_maximizing:
-                max_score = -float('inf')
-                for pos in range(16):
-                    if board[pos] is None:
-                        new_board = board.copy()
-                        new_board[pos] = current_piece
-                        score = minimax(state, new_board, remaining_pieces, None, depth-1, False, alpha, beta, start_time)
-                        max_score = max(max_score, score)
-                        alpha = max(alpha, score)
-                        if beta <= alpha:
-                            break
-                return max_score
-            else:
-                min_score = float('inf')
-                for pos in range(16):
-                    if board[pos] is None:
-                        new_board = board.copy()
-                        new_board[pos] = current_piece
-                        score = minimax(state, new_board, remaining_pieces, None, depth-1, True, alpha, beta, start_time)
-                        min_score = min(min_score, score)
-                        beta = min(beta, score)
-                        if beta <= alpha:
-                            break
-                return min_score
-        else:
-            # Choose a piece
-            if is_maximizing:
-                max_score = -float('inf')
-                for piece in remaining_pieces:
-                    new_remaining = [p for p in remaining_pieces if p != piece]
-                    score = minimax(state, board.copy(), new_remaining, piece, depth-1, False, alpha, beta, start_time)
-                    max_score = max(max_score, score)
-                    alpha = max(alpha, score)
-                    if beta <= alpha:
-                        break
-                return max_score
-            else:
-                min_score = float('inf')
-                for piece in remaining_pieces:
-                    new_remaining = [p for p in remaining_pieces if p != piece]
-                    score = minimax(state, board.copy(), new_remaining, piece, depth-1, True, alpha, beta, start_time)
-                    min_score = min(min_score, score)
-                    beta = min(beta, score)
-                    if beta <= alpha:
-                        break
-                return min_score
-
-
-'''programme principal'''
-
-while __name__ == '__main__':
-    main()
+# Point d'entrée
+if __name__ == '__main__':
+    s_inscrire()
+    while True:
+        main()
