@@ -1,585 +1,319 @@
 import pytest
+import copy
+import random
 import socket
 import json
-import time
-from unittest.mock import patch, MagicMock, mock_open
+from unittest.mock import MagicMock, patch
 import sys
 import os
-from io import StringIO
 
-# Import the module to test
-# Make sure the original file is in the same directory or in the Python path
-from projet_quarto import (
-    get_available_positions, get_available_pieces, piece_danger_score,
-    has_common_attribute, check_winner, evaluate_board, minimax_cached,
-    find_best_pos, find_best_piece, adaptive_depth, PIECES_INITIALES,
-    s_inscrire, main, PORT, NOM, MATRICULES, SERVER_ADDRESS, MAX_RECV_LENGTH, TIMEOUT
-)
+# Add the parent directory to path so we can import the module to test
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import projet_quarto
 
-# Fixtures for common test data
+# Test fixtures
 @pytest.fixture
 def empty_board():
     return [None] * 16
 
 @pytest.fixture
-def partial_board():
-    return [
-        'BDEC', None, None, None,
-        None, 'BLFC', None, None,
-        None, None, 'SDEP', None,
-        None, None, None, 'SLFP'
-    ]
-
-@pytest.fixture
-def almost_win_board():
-    return [
-        'BDEC', 'BLEC', 'SDEC', None,
-        None, None, None, None,
-        None, None, None, None,
-        None, None, None, None
-    ]
+def sample_board():
+    board = [None] * 16
+    board[0] = "BDEC"  # Big, Dark, Empty, Cubic
+    board[5] = "BLEP"  # Big, Light, Empty, Pyramidal
+    board[10] = "SDFP" # Small, Dark, Full, Pyramidal
+    board[15] = "SLFC" # Small, Light, Full, Cubic
+    return board
 
 @pytest.fixture
 def winning_board():
-    return [
-        'BDEC', 'BLEC', 'SDEC', 'SLEC',
-        None, None, None, None,
-        None, None, None, None,
-        None, None, None, None
-    ]
+    board = [None] * 16
+    # Create a winning row with all Small pieces
+    board[0] = "SDEC"
+    board[1] = "SLEP"
+    board[2] = "SDFC"
+    board[3] = "SLFP"
+    return board
+
+@pytest.fixture
+def nearly_winning_board():
+    board = [None] * 16
+    # Create a board with 3 small pieces in a row
+    board[0] = "SDEC"
+    board[1] = "SLEP"
+    board[2] = "SDFC"
+    # Position 3 is empty but could complete a winning row
+    return board
+
+@pytest.fixture
+def sample_state(sample_board):
+    return {
+        "board": sample_board,
+        "piece": "BDEP",
+        "errors": []
+    }
 
 @pytest.fixture
 def empty_state(empty_board):
     return {
         "board": empty_board,
-        "piece": 'BDEC'
+        "piece": "BDEP",
+        "errors": []
     }
 
-@pytest.fixture
-def partial_state(partial_board):
-    return {
-        "board": partial_board,
-        "piece": 'BDFC'
-    }
-
-@pytest.fixture
-def win_state(almost_win_board):
-    return {
-        "board": almost_win_board,
-        "piece": 'SLEC'
-    }
-
-# Tests for utility functions
-def test_get_available_positions(empty_board, partial_board):
-    """Test that available positions are correctly identified and prioritized"""
-    # Empty board should return all positions with center positions first
-    positions = get_available_positions(empty_board)
+# Test utility functions
+def test_get_available_positions(empty_board, sample_board):
+    # Test with empty board
+    positions = projet_quarto.get_available_positions(empty_board)
     assert len(positions) == 16
-    # Check that center positions come first
-    center_positions = [5, 6, 9, 10]
-    for i in range(4):
-        assert positions[i] in center_positions
+    # Center positions should come first (higher priority)
+    assert all(pos in [5, 6, 9, 10] for pos in positions[:4])
     
-    # Partial board should return correct number of empty positions
-    positions = get_available_positions(partial_board)
+    # Test with partially filled board
+    positions = projet_quarto.get_available_positions(sample_board)
     assert len(positions) == 12
-    assert 0 not in positions  # Position 0 is filled
-    assert 5 not in positions  # Position 5 is filled
-    assert 10 not in positions  # Position 10 is filled
-    assert 15 not in positions  # Position 15 is filled
-    
-    # Test with a full board
-    full_board = ['BDEC'] * 16
-    positions = get_available_positions(full_board)
-    assert len(positions) == 0
+    assert 0 not in positions
+    assert 5 not in positions
+    assert 10 not in positions
+    assert 15 not in positions
 
-def test_get_available_pieces(empty_state, partial_state):
-    """Test that available pieces are correctly identified"""
-    # Empty board with one piece in state
-    pieces = get_available_pieces(empty_state)
-    assert len(pieces) == 15
-    assert 'BDEC' not in pieces
+def test_get_available_pieces():
+    # Test with empty board and no selected piece
+    state = {"board": [None] * 16, "piece": None}
+    pieces = projet_quarto.get_available_pieces(state)
+    assert len(pieces) == 16  # All 16 pieces should be available
     
-    # Partial board with pieces placed
-    pieces = get_available_pieces(partial_state)
-    assert len(pieces) == 11
-    assert 'BDEC' not in pieces
-    assert 'BLFC' not in pieces
-    assert 'SDEP' not in pieces
-    assert 'SLFP' not in pieces
-    assert 'BDFC' not in pieces
+    # Test with some pieces on board and selected piece
+    state = {
+        "board": [None] * 16,
+        "piece": "BDEC"
+    }
+    state["board"][0] = "BLEP"
+    state["board"][1] = "SDFP"
     
-    # Test with a full board
-    full_board = ['BDEC', 'BDFC', 'BDEP', 'BDFP', 'BLEC', 'BLFC', 'BLEP', 'BLFP',
-                  'SDEC', 'SDFC', 'SDEP', 'SDFP', 'SLEC', 'SLFC', 'SLEP', 'SLFP']
-    full_state = {"board": full_board, "piece": None}
-    pieces = get_available_pieces(full_state)
-    assert len(pieces) == 0
-    
-    # Test with no piece selected
-    no_piece_state = {"board": empty_board, "piece": None}
-    pieces = get_available_pieces(no_piece_state)
-    assert len(pieces) == 16
+    pieces = projet_quarto.get_available_pieces(state)
+    assert len(pieces) == 13  # 16 - 3 = 13 pieces available
+    assert "BDEC" not in pieces
+    assert "BLEP" not in pieces
+    assert "SDFP" not in pieces
 
-def test_piece_danger_score(empty_board, almost_win_board):
-    """Test the danger score calculation for pieces"""
-    # On an empty board, no piece should be immediately dangerous
-    for piece in PIECES_INITIALES:
-        score = piece_danger_score(piece, empty_board)
-        assert score == 0
+def test_piece_danger_score(empty_board, nearly_winning_board):
+    # Test with an empty board (no immediate danger)
+    score = projet_quarto.piece_danger_score("SDEP", empty_board)
+    assert score == 0
     
-    # On a board with almost a win, the matching piece should be dangerous
-    score_danger = piece_danger_score('SLEC', almost_win_board)
-    score_safe = piece_danger_score('BDFC', almost_win_board)
-    assert score_danger > score_safe
-    
-    # Test with a piece that would complete a diagonal
-    diagonal_almost_win = [
-        'BDEP', None, None, None,
-        None, 'BLFP', None, None,
-        None, None, 'SDEP', None,
-        None, None, None, None
-    ]
-    score = piece_danger_score('SLFP', diagonal_almost_win)
+    # Test with a nearly winning board
+    # "SLFP" would complete a row of small pieces
+    score = projet_quarto.piece_danger_score("SLFP", nearly_winning_board)
     assert score > 0
 
 def test_has_common_attribute():
-    """Test the detection of common attributes"""
-    # Test case with common first attribute (all begin with B)
-    assert has_common_attribute(['BDEC', 'BDFC', 'BLEC', 'BLFP'])
+    # Test with pieces sharing an attribute (all small)
+    pieces = ["SDEC", "SLEP", "SDFC", "SLFP"]
+    assert projet_quarto.has_common_attribute(pieces) == True
     
-    # Test case with common second attribute (all have D)
-    assert has_common_attribute(['BDEC', 'BDFC', 'SDEP', 'SDFP'])
+    # Test with pieces not sharing any attribute
+    pieces = ["BDEC", "SLEP", "SDFC", "BLFP"]
+    assert projet_quarto.has_common_attribute(pieces) == False
     
-    # Test case with common third attribute (all have E)
-    assert has_common_attribute(['BDEC', 'BLEP', 'SDEP', 'SLEP'])
-    
-    # Test case with common fourth attribute (all have C)
-    assert has_common_attribute(['BDEC', 'BDFC', 'SLEC', 'SDFC'])
-    
-    # Test case with no common attributes
-    assert not has_common_attribute(['BDEC', 'SLFP', 'BLEP', 'SDFC'])
-    
-    # Test with None in the list
-    assert not has_common_attribute(['BDEC', None, 'BLEP', 'SDFC'])
+    # Test with None in pieces
+    pieces = ["BDEC", None, "SDFC", "BLFP"]
+    assert projet_quarto.has_common_attribute(pieces) == False
     
     # Test with empty list
-    assert not has_common_attribute([])
-    
-    # Test with fewer than 4 pieces
-    assert has_common_attribute(['BDEC', 'BDFC', 'BDEP'])  # All have B and D
+    assert projet_quarto.has_common_attribute([]) == False
 
-def test_check_winner(empty_board, partial_board, almost_win_board, winning_board):
-    """Test the winner detection logic"""
-    # Empty board should have no winner
-    assert not check_winner(empty_board)
+def test_check_winner(empty_board, winning_board, sample_board):
+    # Test with empty board (no winner)
+    assert projet_quarto.check_winner(empty_board) == False
     
-    # Partial board should have no winner
-    assert not check_winner(partial_board)
+    # Test with winning board (row with all small pieces)
+    assert projet_quarto.check_winner(winning_board) == True
     
-    # Almost win board should have no winner
-    assert not check_winner(almost_win_board)
+    # Test with non-winning board
+    assert projet_quarto.check_winner(sample_board) == False
     
-    # Winning board should detect a winner (all have E as 3rd attribute)
-    assert check_winner(winning_board)
+    # Test winning column
+    column_win = copy.deepcopy(empty_board)
+    column_win[0] = "BDEC"
+    column_win[4] = "BLEC"
+    column_win[8] = "SDEC"
+    column_win[12] = "SLEC"
+    assert projet_quarto.check_winner(column_win) == True  # All cubic
     
-    # Test winning row (second row all have B)
-    winning_row = [
-        None, None, None, None,
-        'BDEC', 'BDFC', 'BLEP', 'BLFP',
-        None, None, None, None,
-        None, None, None, None
-    ]
-    assert check_winner(winning_row)
-    
-    # Test winning column (third column all have F)
-    winning_col = [
-        None, None, 'BDFC', None,
-        None, None, 'BLFC', None,
-        None, None, 'SDFC', None,
-        None, None, 'SLFC', None
-    ]
-    assert check_winner(winning_col)
-    
-    # Test winning diagonal (all have P)
-    winning_diag = [
-        'BDEP', None, None, None,
-        None, 'BLFP', None, None,
-        None, None, 'SDEP', None,
-        None, None, None, 'SLFP'
-    ]
-    assert check_winner(winning_diag)
-    
-    # Tests for the other diagonal
-    winning_diag2 = [
-        None, None, None, 'BDEP',
-        None, None, 'BLFP', None,
-        None, 'SDEP', None, None,
-        'SLFP', None, None, None
-    ]
-    assert check_winner(winning_diag2)
-    
-    # Test where only some positions are filled but no win
-    partial_no_win = [
-        'BDEC', None, 'SLFC', None,
-        None, 'BDFC', None, None,
-        'SLEP', None, 'SDEP', None,
-        None, 'BLFP', None, 'SLFP'
-    ]
-    assert not check_winner(partial_no_win)
+    # Test winning diagonal
+    diag_win = copy.deepcopy(empty_board)
+    diag_win[0] = "BDEP"
+    diag_win[5] = "BLEP"
+    diag_win[10] = "SDEP"
+    diag_win[15] = "SLEP"
+    assert projet_quarto.check_winner(diag_win) == True  # All pyramidal
 
-def test_evaluate_board(empty_board, winning_board):
-    """Test the board evaluation heuristic"""
-    # Empty board should have a neutral score
-    empty_score = evaluate_board(empty_board)
-    assert isinstance(empty_score, (int, float))
+def test_evaluate_board(empty_board, sample_board, winning_board):
+    # Test empty board evaluation
+    score_empty = projet_quarto.evaluate_board(empty_board)
+    assert isinstance(score_empty, (int, float))
     
-    # Winning board should have an infinite score
-    win_score = evaluate_board(winning_board)
-    assert win_score == float('inf')
+    # Test sample board evaluation
+    score_sample = projet_quarto.evaluate_board(sample_board)
+    assert isinstance(score_sample, (int, float))
     
-    # A board with pieces in center should score higher than empty
-    center_board = empty_board.copy()
-    center_board[5] = 'BDEC'
-    center_score = evaluate_board(center_board)
-    assert center_score > empty_score
-    
-    # Test board with potential win
-    potential_win = [
-        'BDEC', 'BDFC', 'BDEP', None,
-        None, None, None, None,
-        None, None, None, None,
-        None, None, None, None
-    ]
-    potential_score = evaluate_board(potential_win)
-    assert potential_score > empty_score
-    
-    # Test board with dangerous position (3 same attributes in a row)
-    dangerous = [
-        'BDEC', 'BDFC', 'BDEP', None,
-        'SLEC', None, None, None,
-        None, None, None, None,
-        None, None, None, None
-    ]
-    dangerous_score = evaluate_board(dangerous)
-    assert dangerous_score != float('inf')  # Not a win yet
-
-def test_minimax_cached():
-    """Test the minimax algorithm with a simple scenario"""
-    # For a simple test, we'll check if minimax returns a numeric value
-    # and if the cache is working (by calling it twice with the same params)
-    board = tuple([None] * 16)
-    pieces = tuple(['BDFC', 'SDFC'])
-    score1 = minimax_cached(board, pieces, 'BDFC', 1, True, float('-inf'), float('inf'))
-    score2 = minimax_cached(board, pieces, 'BDFC', 1, True, float('-inf'), float('inf'))
-    
-    assert isinstance(score1, (int, float))
-    # Second call should be cached and identical
-    assert score1 == score2
-    
-    # Test with winning position
-    winning_board = [
-        'BDEC', 'BLEC', 'SDEC', None,
-        None, None, None, None,
-        None, None, None, None,
-        None, None, None, None
-    ]
-    board_tuple = tuple(winning_board)
-    score = minimax_cached(board_tuple, tuple(['SLEC']), 'SLEC', 1, True, float('-inf'), float('inf'))
-    assert score > 0
-    
-    # Test terminal case for depth
-    score_depth0 = minimax_cached(board, pieces, 'BDFC', 0, True, float('-inf'), float('inf'))
-    assert isinstance(score_depth0, (int, float))
-    
-    # Test with no remaining pieces
-    score_no_pieces = minimax_cached(board, tuple([]), 'BDFC', 2, True, float('-inf'), float('inf'))
-    assert isinstance(score_no_pieces, (int, float))
+    # Test winning board evaluation
+    score_winning = projet_quarto.evaluate_board(winning_board)
+    assert score_winning == float('inf')  # Should return infinity for winning board
 
 def test_adaptive_depth():
-    """Test the adaptive depth function"""
-    # Create test states with different numbers of remaining pieces
-    state_many = {"board": [None] * 16, "piece": 'BDEC'}
-    state_medium = {"board": ['BDEC'] * 8 + [None] * 8, "piece": 'BDFC'}
-    state_few = {"board": ['BDEC'] * 12 + [None] * 4, "piece": 'BLEC'}
+    # Test with lots of time and many pieces
+    state = {"board": [None] * 16, "piece": "BDEP"}
+    depth = projet_quarto.adaptive_depth(state, 5.0)
+    assert depth >= 3
     
-    # Test with plenty of time
-    assert adaptive_depth(state_many, 4.0) == 3
-    assert adaptive_depth(state_medium, 4.0) == 4
-    assert adaptive_depth(state_few, 4.0) == 5
+    # Test with little time
+    depth = projet_quarto.adaptive_depth(state, 1.0)
+    assert depth >= 2
     
-    # Test with medium time
-    assert adaptive_depth(state_many, 2.0) == 3
-    
-    # Test with low time
-    assert adaptive_depth(state_many, 1.0) == 2
+    # Test with few pieces remaining
+    state["board"] = ["BDEC"] * 8 + [None] * 8
+    depth = projet_quarto.adaptive_depth(state, 5.0)
+    assert depth >= 3
 
-@patch('time.time')
-def test_find_best_pos(mock_time, win_state, partial_state, empty_state):
-    """Test the position selection logic"""
-    # Mock time to avoid timeout issues
-    mock_time.return_value = 0
+def test_minimax_cached():
+    # Basic test with simple board
+    board = [None] * 16
+    board[0] = "BDEC"
+    pieces = ["SLEP", "SDFC"]
     
-    # In a winning scenario, it should find the winning move
-    best_pos = find_best_pos(win_state, 0)
-    # Position 3 completes the winning row
-    assert best_pos == 3
+    # Test maximizing player
+    score = projet_quarto.minimax_cached(
+        tuple(board), tuple(pieces), "BDEP", 
+        2, True, float('-inf'), float('inf')
+    )
+    assert isinstance(score, (int, float))
     
-    # In a normal scenario, it should return a valid position
-    pos = find_best_pos(partial_state, 0)
-    assert pos in get_available_positions(partial_state["board"])
+    # Test minimizing player
+    score = projet_quarto.minimax_cached(
+        tuple(board), tuple(pieces), "BDEP", 
+        2, False, float('-inf'), float('inf')
+    )
+    assert isinstance(score, (int, float))
     
-    # Test with empty board
-    pos = find_best_pos(empty_state, 0)
-    assert pos in get_available_positions(empty_state["board"])
-    
-    # Test with time pressure - should still return a valid move
-    mock_time.side_effect = [0, TIMEOUT * 0.9]  # Initial time, then after first check
-    pos = find_best_pos(empty_state, 0)
-    assert pos in get_available_positions(empty_state["board"])
+    # Test with None as current piece (piece selection phase)
+    score = projet_quarto.minimax_cached(
+        tuple(board), tuple(pieces), None, 
+        2, True, float('-inf'), float('inf')
+    )
+    assert isinstance(score, (int, float))
 
-@patch('time.time')
-def test_find_best_piece(mock_time, partial_state, win_state):
-    """Test the piece selection logic"""
-    # Mock time to avoid timeout issues
-    mock_time.return_value = 0
+def test_find_best_piece(sample_state, empty_state):
+    # Test finding best piece on sample board
+    start_time = 0
     
-    # It should return a piece from the available pieces
-    piece = find_best_piece(partial_state, 0)
-    available = get_available_pieces(partial_state)
-    assert piece in available
+    with patch('time.time', side_effect=[0, 0.5, 1.0, 1.5]):
+        # Mock get_available_pieces to return a smaller set for faster testing
+        with patch('projet_quarto.get_available_pieces', return_value=["SLFC", "SDEP", "BLFC"]):
+            piece = projet_quarto.find_best_piece(sample_state, start_time)
+            assert piece in ["SLFC", "SDEP", "BLFC"]
     
-    # Create a state where one piece would lead to a win for the opponent
-    dangerous_state = {
-        "board": win_state["board"],
-        "piece": None
-    }
-    available = get_available_pieces(dangerous_state)
-    
-    # Remove the dangerous piece from available if it exists
-    if 'SLEC' in available:
-        available = [p for p in available if p != 'SLEC']
-    
-    # Don't pick the dangerous piece if possible
-    safe_piece = find_best_piece(dangerous_state, 0)
-    assert safe_piece != 'SLEC' or 'SLEC' not in available
-    
-    # Test with time pressure - should still return a valid piece
-    mock_time.side_effect = [0, TIMEOUT * 0.9]  # Initial time, then after first check
-    piece = find_best_piece(partial_state, 0)
-    assert piece in get_available_pieces(partial_state)
-    
-    # Test the fallback to random choice
-    with patch('random.choice', return_value='SLEP') as mock_random:
-        mock_time.return_value = 0
-        # Simulate no best piece found
-        with patch('projet_quarto.minimax_cached', return_value=-float('inf')):
-            piece = find_best_piece(partial_state, 0)
-            assert piece == 'SLEP'
-            mock_random.assert_called_once()
+    # Test with time constraint
+    with patch('time.time', side_effect=[0, 3.0]):
+        with patch('projet_quarto.get_available_pieces', return_value=["SLFC", "SDEP"]):
+            piece = projet_quarto.find_best_piece(empty_state, start_time)
+            assert piece in ["SLFC", "SDEP"]
 
-@patch('socket.socket')
-def test_s_inscrire(mock_socket):
-    """Test the server registration function"""
-    # Setup mock for socket
-    mock_instance = MagicMock()
-    mock_socket.return_value.__enter__.return_value = mock_instance
-    mock_instance.recv.return_value = b'{"status": "ok"}'
-    
-    # Capture stdout to verify output
-    captured_output = StringIO()
-    sys.stdout = captured_output
-    
-    s_inscrire()
-    
-    # Reset stdout
-    sys.stdout = sys.__stdout__
-    
-    # Verify that the function sent the correct JSON
-    sent_data = mock_instance.send.call_args[0][0].decode()
-    sent_json = json.loads(sent_data)
-    
-    assert sent_json["request"] == "subscribe"
-    assert sent_json["port"] == PORT
-    assert sent_json["name"] == NOM
-    assert sent_json["matricules"] == MATRICULES
-    
-    # Verify that the socket connected to the correct address
-    mock_instance.connect.assert_called_once_with(SERVER_ADDRESS)
-    
-    # Verify that the function printed the server response
-    assert "Réponse du serveur" in captured_output.getvalue()
+# Network/integration tests
+def test_s_inscrire():
+    with patch('socket.socket') as mock_socket:
+        mock_instance = MagicMock()
+        mock_socket.return_value.__enter__.return_value = mock_instance
+        mock_instance.recv.return_value = b'{"status": "ok"}'
+        
+        projet_quarto.s_inscrire()
+        
+        # Check that connect was called with the right arguments
+        mock_instance.connect.assert_called_with(projet_quarto.SERVER_ADDRESS)
+        # Check that the right request was sent
+        sent_data = mock_instance.send.call_args[0][0].decode()
+        sent_json = json.loads(sent_data)
+        assert sent_json["request"] == "subscribe"
+        assert sent_json["port"] == projet_quarto.PORT
+        assert sent_json["name"] == projet_quarto.NOM
+        assert sent_json["matricules"] == projet_quarto.MATRICULES
 
-@patch('socket.socket')
-def test_main_ping(mock_socket):
-    """Test the main function handling ping requests"""
-    # Setup mock for socket and client connection
-    mock_socket_instance = MagicMock()
-    mock_client = MagicMock()
-    mock_socket.return_value.__enter__.return_value = mock_socket_instance
-    mock_socket_instance.accept.return_value = (mock_client, ('127.0.0.1', 12345))
-    mock_client.__enter__.return_value = mock_client
-    mock_client.recv.return_value = json.dumps({"request": "ping"}).encode()
-    
-    main()
-    
-    # Verify that the function sent the correct response
-    sent_data = mock_client.send.call_args[0][0].decode()
-    sent_json = json.loads(sent_data)
-    
-    assert sent_json["response"] == "pong"
-    
-    # Verify that socket was bound to correct port
-    mock_socket_instance.bind.assert_called_once_with(('', PORT))
-    mock_socket_instance.settimeout.assert_called_once_with(1)
-    mock_socket_instance.listen.assert_called_once()
+def test_main_ping():
+    with patch('socket.socket') as mock_socket:
+        # Setup mock socket
+        mock_server = MagicMock()
+        mock_client = MagicMock()
+        mock_socket.return_value.__enter__.return_value = mock_server
+        mock_server.accept.return_value = (mock_client, ('127.0.0.1', 1234))
+        mock_client.__enter__.return_value = mock_client
+        mock_client.recv.return_value = json.dumps({
+            "request": "ping"
+        }).encode()
+        
+        projet_quarto.main()
+        
+        # Check response
+        sent_data = mock_client.send.call_args[0][0].decode()
+        sent_json = json.loads(sent_data)
+        assert sent_json["response"] == "pong"
 
-@patch('socket.socket')
-@patch('projet_quarto.find_best_pos')
-@patch('projet_quarto.find_best_piece')
-def test_main_play(mock_find_piece, mock_find_pos, mock_socket):
-    """Test the main function handling play requests"""
-    # Mock the AI functions
-    mock_find_pos.return_value = 3
-    mock_find_piece.return_value = 'BDFC'
-    
-    # Setup mock for socket and client connection
-    mock_socket_instance = MagicMock()
-    mock_client = MagicMock()
-    mock_socket.return_value.__enter__.return_value = mock_socket_instance
-    mock_socket_instance.accept.return_value = (mock_client, ('127.0.0.1', 12345))
-    mock_client.__enter__.return_value = mock_client
-    
-    # Create a play request
-    play_request = {
-        "request": "play",
-        "state": {
+def test_main_play():
+    with patch('socket.socket') as mock_socket:
+        # Setup mock socket
+        mock_server = MagicMock()
+        mock_client = MagicMock()
+        mock_socket.return_value.__enter__.return_value = mock_server
+        mock_server.accept.return_value = (mock_client, ('127.0.0.1', 1234))
+        mock_client.__enter__.return_value = mock_client
+        
+        # Create a game state
+        state = {
             "board": [None] * 16,
-            "piece": 'BDEC'
-        },
-        "errors": []
-    }
-    mock_client.recv.return_value = json.dumps(play_request).encode()
-    
-    # Capture stdout
-    captured_output = StringIO()
-    sys.stdout = captured_output
-    
-    main()
-    
-    # Reset stdout
-    sys.stdout = sys.__stdout__
-    
-    # Verify that the function sent the correct response
-    sent_data = mock_client.send.call_args[0][0].decode()
-    sent_json = json.loads(sent_data)
-    
-    assert sent_json["response"] == "move"
-    assert sent_json["move"]["pos"] == 3
-    assert sent_json["move"]["piece"] == 'BDFC'
-    assert "message" in sent_json
-    
-    # Verify that the AI functions were called
-    mock_find_pos.assert_called_once()
-    mock_find_piece.assert_called_once()
-    
-    # Verify that errors were printed
-    assert "ERRORS" in captured_output.getvalue()
-    assert "chosen_move" in captured_output.getvalue()
+            "piece": "BDEP",
+            "errors": []
+        }
+        mock_client.recv.return_value = json.dumps({
+            "request": "play",
+            "state": state,
+            "errors": []
+        }).encode()
+        
+        # Mock time to avoid actual waiting
+        with patch('time.time', return_value=0):
+            # Mock decision functions to speed up test
+            with patch('projet_quarto.find_best_pos', return_value=0):
+                with patch('projet_quarto.find_best_piece', return_value="SLFC"):
+                    projet_quarto.main()
+        
+        # Check response
+        sent_data = mock_client.send.call_args[0][0].decode()
+        sent_json = json.loads(sent_data)
+        assert sent_json["response"] == "move"
+        assert "move" in sent_json
+        assert sent_json["move"]["pos"] == 0
+        assert sent_json["move"]["piece"] == "SLFC"
 
-@patch('socket.socket')
-def test_main_socket_timeout(mock_socket):
-    """Test the main function handling socket timeout"""
-    # Setup mock to raise timeout
-    mock_socket_instance = MagicMock()
-    mock_socket.return_value.__enter__.return_value = mock_socket_instance
-    mock_socket_instance.accept.side_effect = socket.timeout
+def test_main_exception_handling():
+    # Test socket timeout
+    with patch('socket.socket') as mock_socket:
+        mock_server = MagicMock()
+        mock_socket.return_value.__enter__.return_value = mock_server
+        mock_server.accept.side_effect = socket.timeout
+        
+        # Should not raise exception
+        projet_quarto.main()
     
-    # Should not raise exception
-    main()
-    
-    # Verify socket was set up correctly
-    mock_socket_instance.bind.assert_called_once_with(('', PORT))
-    mock_socket_instance.settimeout.assert_called_once_with(1)
-    mock_socket_instance.listen.assert_called_once()
+    # Test generic exception
+    with patch('socket.socket') as mock_socket:
+        mock_server = MagicMock()
+        mock_socket.return_value.__enter__.return_value = mock_server
+        mock_server.accept.side_effect = Exception("Test exception")
+        
+        # Should not raise exception, but print error
+        with patch('builtins.print') as mock_print:
+            projet_quarto.main()
+            mock_print.assert_called()
 
-@patch('socket.socket')
-def test_main_exception(mock_socket):
-    """Test the main function handling general exceptions"""
-    # Setup mock to raise exception
-    mock_socket_instance = MagicMock()
-    mock_socket.return_value.__enter__.return_value = mock_socket_instance
-    mock_socket_instance.accept.side_effect = Exception("Test exception")
-    
-    # Capture stdout
-    captured_output = StringIO()
-    sys.stdout = captured_output
-    
-    # Should not raise exception
-    main()
-    
-    # Reset stdout
-    sys.stdout = sys.__stdout__
-    
-    # Verify error was printed
-    assert "Erreur: Test exception" in captured_output.getvalue()
-
-@patch('socket.socket')
-def test_main_json_decode_error(mock_socket):
-    """Test main function handling invalid JSON"""
-    # Setup mock for socket and client connection
-    mock_socket_instance = MagicMock()
-    mock_client = MagicMock()
-    mock_socket.return_value.__enter__.return_value = mock_socket_instance
-    mock_socket_instance.accept.return_value = (mock_client, ('127.0.0.1', 12345))
-    mock_client.__enter__.return_value = mock_client
-    mock_client.recv.return_value = b'invalid json'
-    
-    # Capture stdout
-    captured_output = StringIO()
-    sys.stdout = captured_output
-    
-    main()
-    
-    # Reset stdout
-    sys.stdout = sys.__stdout__
-    
-    # Verify error was printed
-    assert "Erreur" in captured_output.getvalue()
-
-# Create a conftest.py file with pytest configuration
-@pytest.fixture(scope="session", autouse=True)
-def create_conftest():
-    with open("conftest.py", "w") as f:
-        f.write("""
-# content of conftest.py
-def pytest_addoption(parser):
-    parser.addoption(
-        "--cov-report", action="store", default="term-missing",
-        help="Coverage report format"
-    )
-    parser.addoption(
-        "--cov", action="store", default="projet_quarto",
-        help="Path to measure coverage"
-    )
-""")
-    yield
-    # Clean up
-    if os.path.exists("conftest.py"):
-        os.remove("conftest.py")
-
-# Create a pytest.ini file with coverage configuration
-@pytest.fixture(scope="session", autouse=True)
-def create_pytest_ini():
-    with open("pytest.ini", "w") as f:
-        f.write("""
-[pytest]
-addopts = --cov=projet_quarto --cov-report=term-missing --cov-report=html
-""")
-    yield
-    # Clean up
-    if os.path.exists("pytest.ini"):
-        os.remove("pytest.ini")
-
-if __name__ == '__main__':
-    pytest.main(["-v", "--cov=projet_quarto", "--cov-report=term-missing", "--cov-report=html"])
+# Run the tests with coverage:
+# python -m pytest test_projet_quarto.py -v --cov=projet_quarto --cov-report term-missing

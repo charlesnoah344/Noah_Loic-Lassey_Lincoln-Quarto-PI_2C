@@ -9,14 +9,9 @@ PORT = 677
 NOM = 'Lamine_Yamal_ssj3'
 MATRICULES = ["23397", "23158"]
 TIMEOUT = 3.0
-SERVER_ADDRESS = ('172.17.10.133', 3000)
+SERVER_ADDRESS = ('localhost', 3000)
 MAX_RECV_LENGTH = 10000
 
-# Toutes les pièces possibles
-PIECES_INITIALES = [
-    'BDEC', 'BDFC', 'BDEP', 'BDFP', 'BLEC', 'BLFC', 'BLEP', 'BLFP',
-    'SDEC', 'SDFC', 'SDEP', 'SDFP', 'SLEC', 'SLFC', 'SLEP', 'SLFP'
-]
 
 # Inscription au serveur
 def s_inscrire():
