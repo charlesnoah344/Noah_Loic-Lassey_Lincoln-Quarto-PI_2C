@@ -11,6 +11,7 @@ socket
 json
 random
 copy
+functools
 
 Auteurs:
 Noah Awono Charles Loic, 23397

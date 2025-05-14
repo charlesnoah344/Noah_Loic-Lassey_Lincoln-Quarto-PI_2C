@@ -9,7 +9,7 @@ PORT = 677
 NOM = 'Lamine_Yamal_ssj3'
 MATRICULES = ["23397", "23158"]
 TIMEOUT = 3.0
-SERVER_ADDRESS = ('localhost', 3000)
+SERVER_ADDRESS = ('172.17.10.133', 3000)
 MAX_RECV_LENGTH = 10000
 
 
@@ -32,7 +32,7 @@ def get_available_positions(board):
     """Retourne les positions disponibles triées par importance (centre > coins > bords)"""
     positions = [i for i, p in enumerate(board) if p is None]
     position_values = [3 if i in [5, 6, 9, 10] else 2 if i in [0, 3, 12, 15] else 1 for i in range(16)]
-    positions.sort(key=lambda x: -position_values[x])
+    positions.sort(key=lambda x: -position_values[x])#on trie selon la valeur négative (pour trier du plus grand au plus petit).
     return positions
 
 def get_available_pieces(state):
